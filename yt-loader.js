@@ -1,27 +1,21 @@
 (function() {
-  // 管理画面から自動更新されるデータリスト
   var videoList = {
-    "": { "url": "", "position": "top" } // トップページ用サンプル
+    "": { "url": "https://www.youtube.com/watch?v=...", "position": "top" }
   };
-
+  
   var path = window.location.pathname;
-  var currentId = (path === "/" || path === "/index.html") ? "" : path.split('/').pop();
-  var config = videoList[currentId];
+  var id = (path === "/" || path === "/index.html") ? "" : path.split('/').pop();
+  var cfg = videoList[id];
 
-  if (config && config.url) {
-    var vid = config.url.indexOf("v=")!==-1 ? config.url.split("v=")[1].split("&")[0] : config.url.split("youtu.be/")[1].split("?")[0];
+  if (cfg) {
+    var vid = cfg.url.split("v=")[1].split("&")[0];
+    var container = document.createElement("div");
+    // 完璧な配置CSS
+    container.style.cssText = "width:100%; display:flex; justify-content:center; margin:20px 0;";
+    container.innerHTML = '<div style="width:95%; max-width:900px; aspect-ratio:16/9; overflow:hidden; border-radius:8px; box-shadow:0 4px 12px rgba(0,0,0,0.1);"><iframe width="100%" height="100%" src="https://www.youtube.com/embed/'+vid+'" frameborder="0" allowfullscreen></iframe></div>';
     
-    var w = document.createElement("div");
-    w.style.cssText = "width:100% !important; display:flex !important; justify-content:center !important; margin:20px 0 !important; box-sizing:border-box !important;";
-    w.innerHTML = '<div style="width:95% !important; max-width:900px !important; aspect-ratio:16/9 !important; overflow:hidden !important; border-radius:8px !important; box-shadow:0 4px 12px rgba(0,0,0,0.1) !important; background:#000 !important;"><iframe style="width:100% !important; height:100% !important; border:none !important;" src="https://www.youtube.com/embed/'+vid+'?rel=0" allowfullscreen></iframe></div>';
-    
-    var inject = function() {
-      var m = (config.position === "bottom") ? document.body : (document.querySelector(".layout-main") || document.body);
-      if (config.position === "bottom") m.appendChild(w);
-      else if (m.firstChild) m.insertBefore(w, m.firstChild);
-      else m.appendChild(w);
-    };
-    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", inject);
-    else inject();
+    // 表示位置制御（top または bottom）
+    if (cfg.position === "bottom") document.body.appendChild(container);
+    else document.querySelector(".layout-main").insertBefore(container, document.querySelector(".layout-main").firstChild);
   }
 })();
