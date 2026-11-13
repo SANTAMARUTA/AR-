@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#291b32">
+  <title>Kaori · Birthday AR</title>
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; font-family: system-ui, sans-serif; color: #fff; background: transparent; }
+    #ar { position: fixed; inset: 0; overflow: hidden; }
+    a-scene { width: 100%; height: 100%; }
+    /* Keep MindAR's own camera sizing: overriding it can misalign the overlay. */
+    #ar > video { z-index: 0 !important; }
+    a-scene canvas { z-index: 1; }
+    #welcome { position: fixed; inset: 0; z-index: 10; overflow: auto; display: grid; place-items: center; padding: 28px 22px; background: radial-gradient(ellipse at top, #654457, #291b32 70%); }
+    .card { width: min(100%, 390px); text-align: center; }
+    .date { color: #f1cc9e; letter-spacing: .24em; font-size: 12px; }
+    h1 { margin: 20px 0; font: italic 48px/1.08 Georgia, serif; }
+    h1 span { display: block; margin-top: 8px; font: 16px system-ui, sans-serif; letter-spacing: .18em; }
+    .preview { width: 100%; max-height: 28vh; object-fit: contain; border-radius: 14px; margin: 8px 0 14px; }
+    p { font-size: 14px; line-height: 1.9; color: #ebdfe7; }
+    button, .link { min-height: 48px; border: 1px solid #ffffff40; border-radius: 999px; padding: 12px 22px; font: inherit; cursor: pointer; }
+    #start { width: 100%; background: #f6d4ac; color: #362334; font-weight: 700; }
+    button:disabled { opacity: .6; cursor: wait; }
+    .link { display: inline-block; margin-top: 12px; font-size: 13px; color: #fff; text-decoration: none; }
+    #message { min-height: 2em; margin-bottom: 0; }
+    #hud { position: fixed; z-index: 5; top: max(16px, env(safe-area-inset-top)); left: 16px; right: 16px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    #status { background: #24192bc9; border-radius: 16px; padding: 12px 16px; font-size: 13px; backdrop-filter: blur(8px); }
+    #close, #controls button { background: #24192bdb; color: #fff; }
+    #controls { position: fixed; z-index: 5; bottom: max(20px, env(safe-area-inset-bottom)); left: 16px; right: 16px; display: flex; justify-content: center; flex-wrap: wrap; gap: 10px; }
+    #hint { position: fixed; z-index: 4; bottom: 100px; left: 24px; right: 24px; text-align: center; font-size: 13px; text-shadow: 0 1px 5px #000; pointer-events: none; }
+    :focus-visible { outline: 3px solid #f6d4ac; outline-offset: 4px; }
+  </style>
+</head>
+<body>
+  <main id="welcome">
+    <div class="card">
+      <div class="date">2026 · 11 · 17</div>
+      <h1>Happy Birthday<span>KAORI</span></h1>
+      <img class="preview" src="./target-preview.jpg" alt="カメラで映すバースデーカード">
+      <p>このカードにカメラを向けると、<br>お祝いの動画が動き出します。</p>
+      <button id="start" type="button" disabled>準備しています…</button>
+      <a class="link" href="./kaoribirthday20261117.mp4">動画だけを見る</a>
+      <p id="message" role="status" aria-live="polite">明るい場所で、カード全体を映してください。</p>
+    </div>
+  </main>
+  <div id="ar">
+    <a-scene embedded mindar-image="imageTargetSrc: ./targets.mind; autoStart: false; maxTrack: 1; uiLoading: no; uiScanning: no; uiError: no; missTolerance: 8; warmupTolerance: 5;"
+      renderer="alpha: true; antialias: true; colorManagement: true" vr-mode-ui="enabled: false" device-orientation-permission-ui="enabled: false" loading-screen="enabled: false">
+      <a-assets timeout="15000">
+        <video id="movie" src="./kaoribirthday20261117.mp4" preload="metadata" muted playsinline webkit-playsinline loop crossorigin="anonymous"></video>
+      </a-assets>
+      <a-entity id="target" mindar-image-target="targetIndex: 0">
+        <a-video id="screen" src="#movie" width="1" height="0.72229" position="0 0 0.01" material="shader: flat; side: double"></a-video>
+      </a-entity>
+      <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+    </a-scene>
+  </div>
+  <div id="hud" hidden><div id="status" role="status" aria-live="polite">カードを探しています…</div><button id="close" type="button">終了</button></div>
+  <div id="hint" hidden>カード全体を映して、少し待ってください</div>
+  <div id="controls" hidden><button id="sound" type="button">音をON</button><button id="replay" type="button">最初から</button><button id="play" type="button" hidden>タップして再生</button></div>
+  <script>
+    'use strict';
+    const $ = id => document.getElementById(id);
+    const scene = document.querySelector('a-scene');
+    const movie = $('movie');
+    let ready = false, starting = false, active = false, visible = false;
+    let soundEnabled = false, playbackRequest = 0, startupTimer;
+    const system = () => scene.systems['mindar-image-system'];
+    function setStatus(text) { $('status').textContent = text; }
+    function updateAspect() {
+      if (movie.videoWidth && movie.videoHeight) {
+        $('screen').setAttribute('height', movie.videoHeight / movie.videoWidth);
+      }
+    }
+    movie.addEventListener('loadedmetadata', updateAspect);
+    updateAspect();
+    function pauseMovie() {
+      playbackRequest++;
+      movie.pause();
+      movie.muted = true;
+      $('play').hidden = true;
+    }
+    async function playMovie() {
+      if (!active || !visible || document.hidden) return;
+      const request = ++playbackRequest;
+      movie.muted = !soundEnabled;
+      try {
+        await movie.play();
+        if (request !== playbackRequest) {
+          if (!active || !visible || document.hidden) movie.pause();
+          return;
+        }
+        $('play').hidden = true;
+        setStatus('お誕生日おめでとう！');
+      } catch (error) {
+        if (request !== playbackRequest) return;
+        // Some phones require another tap even after the initial start.
+        $('play').hidden = false;
+        setStatus('再生ボタンをタップしてください');
+      }
+    }
+    function fail(text) {
+      clearTimeout(startupTimer);
+      starting = false;
+      active = false;
+      visible = false;
+      pauseMovie();
+      const ar = system();
+      // Also release camera tracks if loading failed before a controller existed.
+      if (ar?.controller) { try { ar.pause(); } catch (_) {} }
+      ar?.video?.srcObject?.getTracks().forEach(track => track.stop());
+      $('welcome').hidden = false;
+      $('hud').hidden = $('controls').hidden = $('hint').hidden = true;
+      $('start').hidden = true;
+      $('message').textContent = text + ' ページを再読み込みして、もう一度お試しください。';
+    }
+    function enableStart() {
+      if (!window.AFRAME || !AFRAME.components['mindar-image']) {
+        fail('ARライブラリを読み込めませんでした。通信状況を確認してください。');
+        return;
+      }
+      ready = true;
+      $('start').disabled = false;
+      $('start').textContent = 'カメラでお祝いを見る';
+    }
+    if (scene.renderStarted) enableStart();
+    else scene.addEventListener('renderstart', enableStart, { once: true });
+    window.addEventListener('load', () => {
+      if (!window.AFRAME || !AFRAME.components['mindar-image']) fail('ARライブラリを読み込めませんでした。');
+    });
+    $('start').addEventListener('click', () => {
+      if (!ready || starting || active) return;
+      if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+        $('message').textContent = 'HTTPSのURLをSafariまたはChromeで開いてください。ファイルを直接開くとARは使えません。';
+        return;
+      }
+      starting = true;
+      $('start').disabled = true;
+      $('start').textContent = 'カメラを起動しています…';
+      $('message').textContent = 'カメラの使用を許可してください。';
+      // Prime muted inline playback within a real user gesture.
+      movie.muted = true;
+      movie.play().then(() => { if (!visible) movie.pause(); }).catch(() => {});
+      startupTimer = setTimeout(() => fail('起動に時間がかかっています。カメラの許可と通信を確認してください。'), 60000);
+      try { system().start(); } catch (_) { fail('ARを起動できませんでした。'); }
+    });
+    scene.addEventListener('arReady', () => {
+      if (!starting) {
+        system().pause();
+        system().video?.srcObject?.getTracks().forEach(track => track.stop());
+        return;
+      }
+      clearTimeout(startupTimer);
+      starting = false;
+      active = true;
+      $('welcome').hidden = true;
+      $('hud').hidden = $('hint').hidden = false;
+      setStatus('カードを探しています…');
+      if (document.hidden) system().pause();
+    });
+    scene.addEventListener('arError', () => fail('カメラを起動できませんでした。ブラウザーのカメラ許可を確認してください。'));
+    movie.addEventListener('error', () => fail('動画を読み込めませんでした。MP4ファイルの配置を確認してください。'));
+    $('target').addEventListener('targetFound', () => {
+      if (!active || document.hidden) return;
+      visible = true;
+      $('controls').hidden = false;
+      $('hint').hidden = true;
+      playMovie();
+    });
+    $('target').addEventListener('targetLost', () => {
+      visible = false;
+      pauseMovie();
+      $('controls').hidden = true;
+      $('hint').hidden = !active;
+      setStatus('カードをもう一度映してください');
+    });
+    $('sound').addEventListener('click', () => {
+      if (!active || !visible) return;
+      soundEnabled = !soundEnabled;
+      $('sound').textContent = soundEnabled ? '音をOFF' : '音をON';
+      $('sound').setAttribute('aria-pressed', String(soundEnabled));
+      playMovie();
+    });
+    $('replay').addEventListener('click', () => { if (visible) { movie.currentTime = 0; playMovie(); } });
+    $('play').addEventListener('click', playMovie);
+    $('close').addEventListener('click', () => {
+      active = false;
+      visible = false;
+      pauseMovie();
+      system().stop();
+      // A reload gives MindAR a fresh controller and camera on the next start.
+      location.reload();
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (!active) return;
+      if (document.hidden) {
+        pauseMovie();
+        system().pause();
+      } else {
+        // The next tracking frame confirms whether the card is still present.
+        visible = false;
+        $('controls').hidden = true;
+        $('hint').hidden = false;
+        setStatus('カードをもう一度映してください');
+        // Reset anchors so a fresh targetFound event is emitted on resuming.
+        $('target').object3D.visible = false;
+        system().unpause();
+      }
+    });
+    window.addEventListener('pagehide', () => {
+      active = false;
+      pauseMovie();
+      system()?.video?.srcObject?.getTracks().forEach(track => track.stop());
+    });
+  </script>
+</body>
+</html>
