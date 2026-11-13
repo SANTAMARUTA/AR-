@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#291b32">
+  <link rel="preload" href="./targets.mind" as="fetch" crossorigin="anonymous">
   <title>Kaori · Birthday AR</title>
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
@@ -46,14 +47,13 @@
       <p id="message" role="status" aria-live="polite">明るい場所で、カード全体を映してください。</p>
     </div>
   </main>
+  <!-- Video is intentionally outside a-assets and has no source until AR is ready. -->
+  <video id="movie" data-src="./kaoribirthday-mobile-v2.mp4" preload="none" muted playsinline webkit-playsinline loop crossorigin="anonymous" hidden></video>
   <div id="ar">
     <a-scene embedded mindar-image="imageTargetSrc: ./targets.mind; autoStart: false; maxTrack: 1; uiLoading: no; uiScanning: no; uiError: no; missTolerance: 8; warmupTolerance: 5;"
       renderer="alpha: true; antialias: true; colorManagement: true" vr-mode-ui="enabled: false" device-orientation-permission-ui="enabled: false" loading-screen="enabled: false">
-      <a-assets timeout="15000">
-        <video id="movie" src="./kaoribirthday20261117.mp4" preload="metadata" muted playsinline webkit-playsinline loop crossorigin="anonymous"></video>
-      </a-assets>
       <a-entity id="target" mindar-image-target="targetIndex: 0">
-        <a-video id="screen" src="#movie" width="1" height="0.72229" position="0 0 0.01" material="shader: flat; side: double"></a-video>
+        <a-video id="screen" width="1.439" height="0.809" position="0 0 0.001" material="shader: flat; side: double"></a-video>
       </a-entity>
       <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
     </a-scene>
@@ -71,12 +71,30 @@
     const system = () => scene.systems['mindar-image-system'];
     function setStatus(text) { $('status').textContent = text; }
     function updateAspect() {
-      if (movie.videoWidth && movie.videoHeight) {
-        $('screen').setAttribute('height', movie.videoHeight / movie.videoWidth);
-      }
+      const videoAspect = movie.videoWidth && movie.videoHeight ? movie.videoWidth / movie.videoHeight : 16 / 9;
+      const cardHeight = 2978 / 4123; // Target width is one MindAR unit.
+      const width = Math.max(1, cardHeight * videoAspect) * 1.12;
+      $('screen').setAttribute('width', width);
+      $('screen').setAttribute('height', width / videoAspect);
     }
     movie.addEventListener('loadedmetadata', updateAspect);
     updateAspect();
+    // Reveal the actual camera before MindAR's GPU warm-up finishes.
+    // Do not resize/crop it: MindAR keeps camera and overlay projections aligned.
+    const cameraObserver = new MutationObserver(records => {
+      for (const record of records) for (const camera of record.addedNodes) {
+        if (camera.tagName !== 'VIDEO') continue;
+        camera.muted = true;
+        camera.playsInline = true;
+        camera.addEventListener('loadeddata', () => {
+          if (!starting) return;
+          $('welcome').hidden = true;
+          $('hud').hidden = false;
+          setStatus('カメラ起動済み · 画像認識を準備しています…');
+        }, {once: true});
+      }
+    });
+    cameraObserver.observe($('ar'), {childList: true});
     function pauseMovie() {
       playbackRequest++;
       movie.pause();
@@ -141,9 +159,7 @@
       $('start').disabled = true;
       $('start').textContent = 'カメラを起動しています…';
       $('message').textContent = 'カメラの使用を許可してください。';
-      // Prime muted inline playback within a real user gesture.
-      movie.muted = true;
-      movie.play().then(() => { if (!visible) movie.pause(); }).catch(() => {});
+      // Camera and tracking preparation must not compete with a movie download.
       startupTimer = setTimeout(() => fail('起動に時間がかかっています。カメラの許可と通信を確認してください。'), 60000);
       try { system().start(); } catch (_) { fail('ARを起動できませんでした。'); }
     });
@@ -159,6 +175,10 @@
       $('welcome').hidden = true;
       $('hud').hidden = $('hint').hidden = false;
       setStatus('カードを探しています…');
+      movie.src = movie.dataset.src;
+      movie.preload = 'auto';
+      $('screen').setAttribute('src', '#movie');
+      movie.load();
       if (document.hidden) system().pause();
     });
     scene.addEventListener('arError', () => fail('カメラを起動できませんでした。ブラウザーのカメラ許可を確認してください。'));
@@ -188,9 +208,14 @@
     $('play').addEventListener('click', playMovie);
     $('close').addEventListener('click', () => {
       active = false;
+      starting = false;
       visible = false;
+      clearTimeout(startupTimer);
       pauseMovie();
-      system().stop();
+      if (system()?.controller) {
+        try { system().stop(); } catch (_) {}
+      }
+      system()?.video?.srcObject?.getTracks().forEach(track => track.stop());
       // A reload gives MindAR a fresh controller and camera on the next start.
       location.reload();
     });
